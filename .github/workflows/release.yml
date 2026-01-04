@@ -1,0 +1,83 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"  # 推送以 v 开头的标签将触发，如 v1.2.3
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ----- Node 构建（按需保留）-----
+      - name: Setup Node.js
+        if: ${{ hashFiles('package.json') != '' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install (Node)
+        if: ${{ hashFiles('package.json') != '' }}
+        run: npm ci
+
+      - name: Build (Node)
+        if: ${{ hashFiles('package.json') != '' }}
+        run: npm run -s build --if-present
+
+      - name: Archive dist (Node)
+        if: ${{ hashFiles('package.json') != '' && hashFiles('dist/**') != '' }}
+        run: |
+          tar -czf dist.tgz dist
+          echo "ASSET_PATH=dist.tgz" >> $GITHUB_ENV
+
+      # ----- Python 构建（按需保留）-----
+      - name: Setup Python
+        if: ${{ hashFiles('pyproject.toml') != '' || hashFiles('setup.py') != '' }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Build (Python)
+        if: ${{ hashFiles('pyproject.toml') != '' || hashFiles('setup.py') != '' }}
+        run: |
+          pip install build
+          python -m build
+          echo "ASSET_PATH=$(ls dist/* | head -n1 || true)" >> $GITHUB_ENV
+
+      # ----- Go 构建（按需保留）-----
+      - name: Setup Go
+        if: ${{ hashFiles('go.mod') != '' }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22.x"
+
+      - name: Build (Go)
+        if: ${{ hashFiles('go.mod') != '' }}
+        run: |
+          go build -o app .
+          tar -czf app-linux-amd64.tgz app
+          echo "ASSET_PATH=app-linux-amd64.tgz" >> $GITHUB_ENV
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: ${{ env.ASSET_PATH }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
