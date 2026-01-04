@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+    branches: [ "**" ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ---------- Node.js ----------
+      - name: Setup Node.js
+        if: ${{ hashFiles('package.json') != '' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install (Node)
+        if: ${{ hashFiles('package.json') != '' }}
+        run: npm ci
+
+      - name: Build (Node)
+        if: ${{ hashFiles('package.json') != '' }}
+        run: npm run -s build --if-present
+
+      - name: Test (Node)
+        if: ${{ hashFiles('package.json') != '' }}
+        run: npm run -s test --if-present
+
+      # ---------- Python ----------
+      - name: Setup Python
+        if: ${{ hashFiles('requirements.txt') != '' || hashFiles('pyproject.toml') != '' }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install (Python)
+        if: ${{ hashFiles('requirements.txt') != '' || hashFiles('pyproject.toml') != '' }}
+        run: |
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f pyproject.toml ]; then pip install . || true; fi
+
+      - name: Test (Python)
+        if: ${{ hashFiles('requirements.txt') != '' || hashFiles('pyproject.toml') != '' }}
+        run: |
+          python - <<'PY'
+          try:
+              import pytest, sys, os
+              raise SystemExit(os.system("pytest -q"))
+          except Exception:
+              print("pytest 未安装或无测试，跳过")
+          PY
+
+      # ---------- Go ----------
+      - name: Setup Go
+        if: ${{ hashFiles('go.mod') != '' }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22.x"
+
+      - name: Build (Go)
+        if: ${{ hashFiles('go.mod') != '' }}
+        run: go build ./...
+
+      - name: Test (Go)
+        if: ${{ hashFiles('go.mod') != '' }}
+        run: go test ./...
